@@ -23,8 +23,35 @@
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+struct mdp_csc_cfg mdp_csc_convert_wideband = {
+	0,
+	{
+		0x0200, 0x0000, 0x02CD,
+		0x0200, 0xFF4F, 0xFE91,
+		0x0200, 0x038B, 0x0000,
+	},
+	{ 0x0, 0xFF80, 0xFF80,},
+	{ 0x0, 0x0, 0x0,},
+	{ 0x0, 0xFF, 0x0, 0xFF, 0x0, 0xFF,},
+	{ 0x0, 0xFF, 0x0, 0xFF, 0x0, 0xFF,},
+};
+#endif
+
 struct mdp_csc_cfg mdp_csc_convert[MDSS_MDP_MAX_CSC] = {
 	[MDSS_MDP_CSC_YUV2RGB_601L] = {
+		0,
+		{
+			0x0200, 0x0000, 0x0000,
+			0x0000, 0x0200, 0x0000,
+			0x0000, 0x0000, 0x0200,
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+	},
+	[MDSS_MDP_CSC_YUV2RGB_601FR] = {
 		0,
 		{
 			0x0254, 0x0000, 0x0331,
@@ -33,32 +60,21 @@ struct mdp_csc_cfg mdp_csc_convert[MDSS_MDP_MAX_CSC] = {
 		},
 		{ 0xfff0, 0xff80, 0xff80,},
 		{ 0x0, 0x0, 0x0,},
-		{ 0x10, 0xeb, 0x10, 0xf0, 0x10, 0xf0,},
-		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
-	},
-	[MDSS_MDP_CSC_YUV2RGB_601FR] = {
-		0,
-		{
-			0x0200, 0x0000, 0x02ce,
-			0x0200, 0xff50, 0xfe92,
-			0x0200, 0x038b, 0x0000,
-		},
-		{ 0x0000, 0xff80, 0xff80,},
-		{ 0x0, 0x0, 0x0,},
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
 	},
 	[MDSS_MDP_CSC_YUV2RGB_709L] = {
 		0,
 		{
-			0x0254, 0x0000, 0x0396,
-			0x0254, 0xff93, 0xfeef,
-			0x0254, 0x043e, 0x0000,
+			0x0083, 0x0102, 0x0032,
+			0x1fb5, 0x1f6c, 0x00e1,
+			0x00e1, 0x1f45, 0x1fdc
 		},
-		{ 0xfff0, 0xff80, 0xff80,},
 		{ 0x0, 0x0, 0x0,},
-		{ 0x10, 0xeb, 0x10, 0xf0, 0x10, 0xf0,},
+		{ 0x0010, 0x0080, 0x0080,},
 		{ 0x0, 0xff, 0x0, 0xff, 0x0, 0xff,},
+		{ 0x0010, 0x00eb, 0x0010, 0x00f0, 0x0010, 0x00f0,},
+
 	},
 	[MDSS_MDP_CSC_RGB2YUV_601L] = {
 		0,
@@ -610,7 +626,18 @@ int mdss_mdp_csc_setup(u32 block, u32 blk_idx, u32 csc_type)
 	pr_debug("csc type=%d blk=%d idx=%d\n", csc_type,
 		 block, blk_idx);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	if ((csc_type == MDSS_MDP_CSC_YUV2RGB_601L || csc_type == MDSS_MDP_CSC_YUV2RGB_601FR ||
+			csc_type == MDSS_MDP_CSC_YUV2RGB_709L) && !csc_update) {
+		data = &mdp_csc_convert_wideband;
+		pr_debug("will do mdp_csc_convert (wide band)\n");
+	} else {
 	data = &mdp_csc_convert[csc_type];
+		pr_debug("will do mdp_csc_convert (narrow band)\n");
+	}
+#else
+	data = &mdp_csc_convert[csc_type];
+#endif
 	return mdss_mdp_csc_setup_data(block, blk_idx, data);
 }
 
@@ -928,9 +955,19 @@ static int pp_vig_pipe_setup(struct mdss_mdp_pipe *pipe, u32 *op)
 			opmode |= (0 << 19) |	/* DST_DATA=RGB */
 				  (1 << 18) |	/* SRC_DATA=YCBCR */
 				  (1 << 17);	/* CSC_1_EN */
-
+			/*
+			 * TODO: Needs to be part of dirty bit logic: if there
+			 * is a previously configured pipe need to re-configure
+			 * CSC matrix
+			 */
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if ((pipe->play_cnt == 0))
+			mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num,
+					   MDSS_MDP_CSC_YUV2RGB_601FR);
+#else
 			mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num,
 					   pp_vig_csc_pipe_val(pipe));
+#endif
 		}
 	}
 

@@ -1200,56 +1200,36 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 		.name = "MultiMedia16",
 		.probe = fe_dai_probe,
 	},
+#ifdef CONFIG_JACK_AUDIO
 	{
 		.playback = {
-			.stream_name = "VoiceMMode1 Playback",
-			.aif_name = "VOICEMMODE1_DL",
-			.rates = SNDRV_PCM_RATE_8000_48000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.stream_name = "MultiMedia17 Playback",
+			.aif_name = "MM_DL17",
+			.rates = (SNDRV_PCM_RATE_8000_192000 |
+					SNDRV_PCM_RATE_KNOT),
+			.formats = (SNDRV_PCM_FMTBIT_S16_LE |
+						SNDRV_PCM_FMTBIT_S24_LE),
 			.channels_min = 1,
-			.channels_max = 2,
-			.rate_min =     8000,
-			.rate_max =     48000,
-	 },
-		.capture = {
-			.stream_name = "VoiceMMode1 Capture",
-			.aif_name = "VOICEMMODE1_UL",
-			.rates = SNDRV_PCM_RATE_8000_48000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
-			.channels_min = 1,
-			.channels_max = 2,
-			.rate_min =     8000,
-			.rate_max =     48000,
-		},
-		.ops = &msm_fe_dai_ops,
-		.name = "VoiceMMode1",
-		.probe = fe_dai_probe,
-	},
-	{
-		.playback = {
-			.stream_name = "VoiceMMode2 Playback",
-			.aif_name = "VOICEMMODE2_DL",
-			.rates = SNDRV_PCM_RATE_8000_48000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
-			.channels_min = 1,
-			.channels_max = 2,
-			.rate_min =     8000,
-			.rate_max =     48000,
+			.channels_max = 8,
+			.rate_min = 8000,
+			.rate_max = 192000,
 		},
 		.capture = {
-			.stream_name = "VoiceMMode2 Capture",
-			.aif_name = "VOICEMMODE2_UL",
-			.rates = SNDRV_PCM_RATE_8000_48000,
+			.stream_name = "MultiMedia17 Capture",
+			.aif_name = "MM_UL17",
+			.rates = (SNDRV_PCM_RATE_8000_48000|
+					SNDRV_PCM_RATE_KNOT),
 			.formats = SNDRV_PCM_FMTBIT_S16_LE,
 			.channels_min = 1,
-			.channels_max = 2,
-			.rate_min =     8000,
-			.rate_max =     48000,
+			.channels_max = 8,
+			.rate_min = 	8000,
+			.rate_max = 48000,
 		},
-		.ops = &msm_fe_dai_ops,
-		.name = "VoiceMMode2",
+		.ops = &msm_fe_Multimedia_dai_ops,
+		.name = "MultiMedia17",
 		.probe = fe_dai_probe,
 	},
+#endif /* CONFIG_JACK_AUDIO */
 };
 
 static int msm_fe_dai_dev_probe(struct platform_device *pdev)

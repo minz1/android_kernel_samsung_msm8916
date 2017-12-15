@@ -2587,9 +2587,9 @@ long kgsl_ioctl_drawctxt_create(struct kgsl_device_private *dev_priv,
 	/* Commit the pointer to the context in context_idr */
 	write_lock(&device->context_lock);
 	idr_replace(&device->context_idr, context, context->id);
+	param->drawctxt_id = context->id;
 	write_unlock(&device->context_lock);
 
-	param->drawctxt_id = context->id;
 done:
 	mutex_unlock(&device->mutex);
 	return result;
@@ -4438,6 +4438,18 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_private_data = entry;
 
+#ifdef CONFIG_TIMA_RKP
+        if (vma->vm_end - vma->vm_start) {
+                /* iommu optimization- needs to be turned ON from
+                * the tz side.
+                */
+                cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)__pa((unsigned long)vma->vm_mm->pgd));
+                __asm__ __volatile__ (
+                "mcr    p15, 0, r0, c8, c3, 0\n"
+                "dsb\n"
+                "isb\n");
+        }
+#endif
 	/* Determine user-side caching policy */
 
 	cache = kgsl_memdesc_get_cachemode(&entry->memdesc);

@@ -23,6 +23,16 @@
 #include <asm/compiler.h>
 
 #include <soc/qcom/scm.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
+
+#include <linux/thread_info.h>
+#include <linux/sched.h>
+#include <linux/string.h>
+#if defined(CONFIG_ARCH_MSM8916) || defined(CONFIG_ARCH_MSM8226) || defined(CONFIG_ARCH_MSM8929) || defined(CONFIG_ARCH_MSM8939)
+#include <linux/smp.h>
+#endif
 
 #define SCM_ENOMEM		-5
 #define SCM_EOPNOTSUPP		-4
@@ -36,7 +46,7 @@
 static DEFINE_MUTEX(scm_lock);
 
 #define SCM_EBUSY_WAIT_MS 30
-#define SCM_EBUSY_MAX_RETRY 20
+#define SCM_EBUSY_MAX_RETRY 400
 
 #define N_EXT_SCM_ARGS 7
 #define FIRST_EXT_ARG_IDX 3
@@ -47,15 +57,16 @@ static DEFINE_MUTEX(scm_lock);
 #define IS_CALL_AVAIL_CMD 1
 
 #define SCM_BUF_LEN(__cmd_size, __resp_size) ({ \
-	size_t x =  __cmd_size + __resp_size; \
-	size_t y = sizeof(struct scm_command) + sizeof(struct scm_response); \
-	size_t result; \
-	if (x < __cmd_size || (x + y) < x) \
-		result = 0; \
-	else \
-		result = x + y; \
-	result; \
-	})
+		size_t x = __cmd_size + __resp_size; \
+		size_t y = sizeof(struct scm_command) + sizeof(struct scm_response); \
+		size_t result; \
+		if (x < __cmd_size || (x + y) < x) \
+			result = 0; \
+		else \
+			result = x + y; \
+		result; \
+		})
+
 /**
  * struct scm_command - one SCM command buffer
  * @len: total available memory for command and response
@@ -206,6 +217,13 @@ static u32 smc(u32 cmd_addr)
 	return r0;
 }
 
+#if defined(CONFIG_ARCH_MSM8916) || defined(CONFIG_ARCH_MSM8226) || defined(CONFIG_ARCH_MSM8929) || defined(CONFIG_ARCH_MSM8939)
+static void __wrap_flush_cache_all(void* vp)
+{
+	flush_cache_all();
+}
+#endif
+
 static int __scm_call(const struct scm_command *cmd)
 {
 	int ret;
@@ -289,9 +307,18 @@ static int scm_call_common(u32 svc_id, u32 cmd_id, const void *cmd_buf,
 	if (cmd_buf)
 		memcpy(scm_get_command_buffer(scm_buf), cmd_buf, cmd_len);
 
+#ifdef CONFIG_SEC_DEBUG
+	sec_debug_secure_log(svc_id, cmd_id);
+#endif
+
 	mutex_lock(&scm_lock);
 	ret = __scm_call(scm_buf);
 	mutex_unlock(&scm_lock);
+
+#ifdef CONFIG_SEC_DEBUG	
+	sec_debug_secure_log(svc_id, cmd_id);
+#endif
+
 	if (ret)
 		return ret;
 
@@ -611,7 +638,9 @@ static int allocate_extra_arg_buffer(struct scm_desc *desc, gfp_t flags)
 
 	return 0;
 }
-
+#ifdef CONFIG_TIMA_LKMAUTH
+pid_t pid_from_lkm = -1;
+#endif
 /**
  * scm_call2() - Invoke a syscall in the secure world
  * @fn_id: The function ID for this syscall
@@ -635,6 +664,7 @@ static int allocate_extra_arg_buffer(struct scm_desc *desc, gfp_t flags)
 */
 int scm_call2(u32 fn_id, struct scm_desc *desc)
 {
+	int call_from_ss_daemon;
 	int arglen = desc->arginfo & 0xf;
 	int ret, retry_count = 0;
 	u64 x0;
@@ -645,10 +675,32 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 
 	x0 = fn_id | scm_version_mask;
 
+	/*
+	 * in case of secure_storage_daemon
+	*/
+	call_from_ss_daemon = (strncmp(current_thread_info()->task->comm, "secure_storage_daemon", TASK_COMM_LEN - 1) == 0);
+
+
 	do {
 		mutex_lock(&scm_lock);
 
 		desc->ret[0] = desc->ret[1] = desc->ret[2] = 0;
+
+#ifdef CONFIG_TIMA_LKMAUTH
+		if (call_from_ss_daemon || ( pid_from_lkm == current_thread_info()->task->pid)) {
+#else
+		if (call_from_ss_daemon) {
+#endif
+			flush_cache_all();
+
+#if defined(CONFIG_ARCH_MSM8916) || defined(CONFIG_ARCH_MSM8226) || defined(CONFIG_ARCH_MSM8929) || defined(CONFIG_ARCH_MSM8939)
+			smp_call_function((void (*)(void *))__wrap_flush_cache_all, NULL, 1);
+#endif
+
+#ifndef CONFIG_ARM64
+			outer_flush_all();
+#endif
+		}
 
 		if (scm_version == SCM_ARMV8_64)
 			ret = __scm_call_armv8_64(x0, desc->arginfo,
@@ -1169,3 +1221,22 @@ int scm_restore_sec_cfg(u32 device_id, u32 spare, int *scm_ret)
 	return 0;
 }
 EXPORT_SYMBOL(scm_restore_sec_cfg);
+
+int kap_status_scm_call(void)
+{
+    int ret;
+    struct scm_desc descrp = {0};
+    uint32_t resp = 4;
+
+    descrp.arginfo = SCM_ARGS(4, SCM_VAL, SCM_VAL, SCM_RW, SCM_VAL);
+    descrp.args[0] = CMD_READ_KAP_STATUS; //command Read
+    descrp.args[1] = 0;
+    descrp.args[2] = virt_to_phys((void*)&resp); // Respnse
+    descrp.args[3] = 4;
+
+    ret = scm_call2(MAKE_OEM_SCM_CMD(TZBSP_SVC_OEM_GENERIC, OEM_GENERIC_CMD_ID), &descrp);
+    if(!ret)
+	return descrp.ret[0];
+    return 0;
+}
+EXPORT_SYMBOL(kap_status_scm_call);

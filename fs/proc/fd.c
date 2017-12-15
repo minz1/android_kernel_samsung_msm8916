@@ -315,6 +315,7 @@ int proc_fd_permission(struct inode *inode, int mask)
 		rv = 0;
 	rcu_read_unlock();
 
+
 	return rv;
 }
 

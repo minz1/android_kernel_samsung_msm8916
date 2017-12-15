@@ -18,6 +18,7 @@
 #include <linux/swap.h>
 #include <linux/aio.h>
 #include <linux/falloc.h>
+#include <linux/statfs.h>
 
 static const struct file_operations fuse_direct_io_file_operations;
 
@@ -1136,6 +1137,7 @@ static ssize_t fuse_fill_write_pages(struct fuse_req *req,
 
 		mark_page_accessed(page);
 
+		iov_iter_advance(ii, tmp);
 		if (!tmp) {
 			unlock_page(page);
 			page_cache_release(page);
@@ -1148,7 +1150,6 @@ static ssize_t fuse_fill_write_pages(struct fuse_req *req,
 		req->page_descs[req->num_pages].length = tmp;
 		req->num_pages++;
 
-		iov_iter_advance(ii, tmp);
 		count += tmp;
 		pos += tmp;
 		offset += tmp;
@@ -1228,6 +1229,69 @@ static ssize_t fuse_perform_write(struct file *file,
 	return res > 0 ? res : err;
 }
 
+/*
+ * Return 0, if a disk has enough free space.
+ * Return error, if vfs_statfs is failed, otherwise -ENOSPC.
+ * We assume that any files can not be overwritten.
+ */
+static inline int check_min_free_space(struct path *lower_path, size_t size,
+					unsigned int reserved_mb)
+{
+	int err;
+	struct kstatfs statfs;
+	u64 avail;
+
+	BUG_ON(!lower_path);
+
+	if (!reserved_mb)
+		return 0;
+
+	/* Get fs stat of lower filesystem. */
+	err = vfs_statfs(lower_path, &statfs);
+	if (unlikely(err)) {
+		printk(KERN_ERR "vfs_statfs error : %d\n", err);
+		return err;
+	}
+
+	/* Invalid statfs informations. */
+	if (unlikely(statfs.f_bsize == 0))
+		goto out_invalid;
+
+	/* available size */
+	avail = statfs.f_bavail * statfs.f_bsize;
+
+	/* not enough space */
+	if ((u64)size > avail)
+		goto out_nospc;
+
+	/* not enough space */
+	if ((avail - size) < ((u64)reserved_mb << 20))
+		goto out_nospc;
+
+	return 0;
+
+out_invalid:
+	printk(KERN_INFO "statfs               : invalid return\n");
+	printk(KERN_INFO "statfs.f_type        : 0x%X\n", (u32)statfs.f_type);
+	printk(KERN_INFO "statfs.f_blocks      : %llu blocks\n", statfs.f_blocks);
+	printk(KERN_INFO "statfs.f_bfree       : %llu blocks\n", statfs.f_bfree);
+	printk(KERN_INFO "statfs.f_files       : %llu\n", statfs.f_files);
+	printk(KERN_INFO "statfs.f_ffree       : %llu\n", statfs.f_ffree);
+	printk(KERN_INFO "statfs.f_fsid.val[1] : 0x%X\n", (u32)statfs.f_fsid.val[1]);
+	printk(KERN_INFO "statfs.f_fsid.val[0] : 0x%X\n", (u32)statfs.f_fsid.val[0]);
+	printk(KERN_INFO "statfs.f_namelen     : %ld\n", statfs.f_namelen);
+	printk(KERN_INFO "statfs.f_frsize      : %ld\n", statfs.f_frsize);
+	printk(KERN_INFO "statfs.f_flags       : %ld\n", statfs.f_flags);
+	printk(KERN_INFO "fuse reserved_mb : %u\n", reserved_mb);
+
+out_nospc:
+	printk_ratelimited(KERN_INFO "statfs.f_bavail : %llu blocks / "
+				     "statfs.f_bsize : %ld bytes / "
+				     "required size : %llu byte\n"
+				,statfs.f_bavail, statfs.f_bsize, (u64)size);
+	return -ENOSPC;
+}
+
 static ssize_t fuse_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 				   unsigned long nr_segs, loff_t pos)
 {
@@ -1281,6 +1345,11 @@ static ssize_t fuse_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		goto out;
 
 	if (ff && ff->shortcircuit_enabled && ff->rw_lower_file) {
+		err = check_min_free_space(&ff->rw_lower_file->f_path,
+				count, ff->fc->reserved_space_mb);
+		if (err)
+			goto out;
+
 		/* Use iocb->ki_pos instead of pos to handle the cases of files
 		 * that are opened with O_APPEND. For example if multiple
 		 * processes open the same file with O_APPEND then the

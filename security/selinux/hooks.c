@@ -85,6 +85,9 @@
 #include <linux/msg.h>
 #include <linux/shm.h>
 
+// [ SEC_SELINUX_PORTING_COMMON
+#include <linux/delay.h>
+// ] SEC_SELINUX_PORTING_COMMON
 
 #include "avc.h"
 #include "objsec.h"
@@ -110,7 +113,13 @@ static int __init enforcing_setup(char *str)
 {
 	unsigned long enforcing;
 	if (!strict_strtoul(str, 0, &enforcing))
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enforcing = 1;
+#else
 		selinux_enforcing = enforcing ? 1 : 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	return 1;
 }
 __setup("enforcing=", enforcing_setup);
@@ -123,7 +132,13 @@ static int __init selinux_enabled_setup(char *str)
 {
 	unsigned long enabled;
 	if (!strict_strtoul(str, 0, &enabled))
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enabled = 1;
+#else
 		selinux_enabled = enabled ? 1 : 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	return 1;
 }
 __setup("selinux=", selinux_enabled_setup);
@@ -442,8 +457,6 @@ static int sb_finish_set_opts(struct super_block *sb)
 	 * Special handling for rootfs. Is genfs but supports
 	 * setting SELinux context on in-core inodes.
 	 */
-	if (strncmp(sb->s_type->name, "rootfs", sizeof("rootfs")) == 0)
-		sbsec->flags |= SE_SBLABELSUPP;
 
 	/* Initialize the root inode. */
 	rc = inode_doinit_with_dentry(root_inode, root);
@@ -459,6 +472,7 @@ next_inode:
 				list_entry(sbsec->isec_head.next,
 					   struct inode_security_struct, list);
 		struct inode *inode = isec->inode;
+		list_del_init(&isec->list);
 		spin_unlock(&sbsec->isec_lock);
 		inode = igrab(inode);
 		if (inode) {
@@ -467,7 +481,6 @@ next_inode:
 			iput(inode);
 		}
 		spin_lock(&sbsec->isec_lock);
-		list_del_init(&isec->list);
 		goto next_inode;
 	}
 	spin_unlock(&sbsec->isec_lock);
@@ -1249,6 +1262,13 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 		goto out_unlock;
 
 	sbsec = inode->i_sb->s_security;
+	/* To prevent Null pointer exception */
+	if (!sbsec) {
+		printk(KERN_ERR "[SELinux] sbsec is NULL, inode->i_sb->s_security is already freed. \n");
+		rc = -EINVAL;
+		goto out_unlock;
+	}
+
 	if (!(sbsec->flags & SE_SBINITIALIZED)) {
 		/* Defer initialization until selinux_complete_init,
 		   after the initial policy is loaded and the security
@@ -2800,6 +2820,25 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 	sid = cred_sid(cred);
 	isec = inode->i_security;
 
+// [ SEC_SELINUX_PORTING_COMMON
+	/* skip sid == 1(kernel), it means first boot time */
+	if(isec->initialized != 1 && sid != 1) {
+		int count = 5;
+
+		while(count-- > 0) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. waiting...(%d/5)\n", 5-count); 
+			udelay(500);
+			if(isec->initialized == 1) {
+				printk(KERN_ERR "SELinux : inode->i_security is INITIALIZED.\n"); 
+				break;
+			}
+		}
+		if(isec->initialized != 1) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. not fixed.\n"); 
+		}
+	}
+// ] SEC_SELINUX_PORTING_COMMON
+
 	rc = avc_has_perm_noaudit(sid, isec->sid, isec->sclass, perms, 0, &avd);
 	audited = avc_audit_required(perms, &avd, rc,
 				     from_access ? FILE__AUDIT_ACCESS : 0,
@@ -3545,6 +3584,38 @@ static int selinux_kernel_module_request(char *kmod_name)
 
 	return avc_has_perm(sid, SECINITSID_KERNEL, SECCLASS_SYSTEM,
 			    SYSTEM__MODULE_REQUEST, &ad);
+}
+
+static int selinux_kernel_module_from_file(struct file *file)
+{
+	struct common_audit_data ad;
+	struct inode_security_struct *isec;
+	struct file_security_struct *fsec;
+	struct inode *inode;
+	u32 sid = current_sid();
+	int rc;
+
+	/* init_module */
+	if (file == NULL)
+		return avc_has_perm(sid, sid, SECCLASS_SYSTEM,
+					SYSTEM__MODULE_LOAD, NULL);
+
+	/* finit_module */
+	ad.type = LSM_AUDIT_DATA_PATH;
+	ad.u.path = file->f_path;
+
+	inode = file_inode(file);
+	isec = inode->i_security;
+	fsec = file->f_security;
+
+	if (sid != fsec->sid) {
+		rc = avc_has_perm(sid, fsec->sid, SECCLASS_FD, FD__USE, &ad);
+		if (rc)
+			return rc;
+	}
+
+	return avc_has_perm(sid, isec->sid, SECCLASS_SYSTEM,
+				SYSTEM__MODULE_LOAD, &ad);
 }
 
 static int selinux_task_setpgid(struct task_struct *p, pid_t pgid)
@@ -4710,7 +4781,13 @@ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 				  "SELinux:  unrecognized netlink message"
 				  " type=%hu for sclass=%hu\n",
 				  nlh->nlmsg_type, sksec->sclass);
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+			if (security_get_allow_unknown())
+#else
 			if (!selinux_enforcing || security_get_allow_unknown())
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 				err = 0;
 		}
 
@@ -5870,6 +5947,7 @@ static struct security_operations selinux_ops = {
 	.kernel_act_as =		selinux_kernel_act_as,
 	.kernel_create_files_as =	selinux_kernel_create_files_as,
 	.kernel_module_request =	selinux_kernel_module_request,
+	.kernel_module_from_file =	selinux_kernel_module_from_file,
 	.task_setpgid =			selinux_task_setpgid,
 	.task_getpgid =			selinux_task_getpgid,
 	.task_getsid =			selinux_task_getsid,
@@ -5992,7 +6070,13 @@ static struct security_operations selinux_ops = {
 static __init int selinux_init(void)
 {
 	if (!security_module_enable(&selinux_ops)) {
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enabled = 1;
+#else
 		selinux_enabled = 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 		return 0;
 	}
 
@@ -6018,7 +6102,11 @@ static __init int selinux_init(void)
 
 	if (avc_add_callback(selinux_netcache_avc_callback, AVC_CALLBACK_RESET))
 		panic("SELinux: Unable to register AVC netcache callback\n");
-
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enforcing = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (selinux_enforcing)
 		printk(KERN_DEBUG "SELinux:  Starting in enforcing mode\n");
 	else
@@ -6095,7 +6183,11 @@ static struct nf_hook_ops selinux_ipv6_ops[] = {
 static int __init selinux_nf_ip_init(void)
 {
 	int err = 0;
-
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enabled = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (!selinux_enabled)
 		goto out;
 

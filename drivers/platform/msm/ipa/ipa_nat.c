@@ -24,6 +24,7 @@
 #define IPA_NAT_SYSTEM_MEMORY  0
 #define IPA_NAT_SHARED_MEMORY  1
 
+
 enum nat_table_type {
 	IPA_NAT_BASE_TBL = 0,
 	IPA_NAT_EXPN_TBL = 1,
@@ -514,6 +515,7 @@ int ipa_nat_dma_cmd(struct ipa_ioc_nat_dma_cmd *dma)
 			goto bail;
 		}
 	}
+
 	size = sizeof(struct ipa_desc) * dma->entries;
 	desc = kzalloc(size, GFP_KERNEL);
 	if (desc == NULL) {

@@ -899,8 +899,6 @@ static void mbim_notify_complete(struct usb_ep *ep, struct usb_request *req)
 	struct f_mbim			*mbim = req->context;
 	struct usb_cdc_notification	*event = req->buf;
 
-	pr_debug("dev:%pK\n", mbim);
-
 	spin_lock(&mbim->lock);
 	switch (req->status) {
 	case 0:
@@ -929,7 +927,7 @@ static void mbim_notify_complete(struct usb_ep *ep, struct usb_request *req)
 	mbim_do_notify(mbim);
 	spin_unlock(&mbim->lock);
 
-	pr_debug("dev:%pK Exit\n", mbim);
+	pr_debug("%s: Exit\n", __func__);
 }
 
 static void mbim_ep0out_complete(struct usb_ep *ep, struct usb_request *req)
@@ -939,8 +937,6 @@ static void mbim_ep0out_complete(struct usb_ep *ep, struct usb_request *req)
 	struct usb_function	*f = req->context;
 	struct f_mbim		*mbim = func_to_mbim(f);
 	struct mbim_ntb_input_size *ntb = NULL;
-
-	pr_debug("dev:%pK\n", mbim);
 
 	req->context = NULL;
 	if (req->status || req->actual != req->length) {
@@ -978,7 +974,7 @@ static void mbim_ep0out_complete(struct usb_ep *ep, struct usb_request *req)
 invalid:
 	usb_ep_set_halt(ep);
 
-	pr_err("dev:%pK Failed\n", mbim);
+	pr_err("%s: Failed\n", __func__);
 
 	return;
 }
@@ -1464,7 +1460,7 @@ static void mbim_suspend(struct usb_function *f)
 		if (mbim->bam_port.out->desc)
 			mbim->out_ep_desc_backup = mbim->bam_port.out->desc;
 
-		pr_debug("in_ep_desc_backup = %p, out_ep_desc_backup = %p",
+		pr_debug("in_ep_desc_backup = %pK, out_ep_desc_backup = %pK\n",
 			mbim->in_ep_desc_backup, mbim->out_ep_desc_backup);
 
 		mbim_bam_disconnect(mbim);
@@ -1504,7 +1500,7 @@ static void mbim_resume(struct usb_function *f)
 		mbim->bam_port.in->desc  = mbim->in_ep_desc_backup;
 		mbim->bam_port.out->desc = mbim->out_ep_desc_backup;
 
-		pr_debug("in_ep_desc_backup = %p, out_ep_desc_backup = %p",
+		pr_debug("in_ep_desc_backup = %pK, out_ep_desc_backup = %pK\n",
 			mbim->in_ep_desc_backup, mbim->out_ep_desc_backup);
 
 		mbim_bam_connect(mbim);

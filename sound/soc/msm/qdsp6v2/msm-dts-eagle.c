@@ -194,6 +194,7 @@ static __s32 volume_cmds_alloc1(__s32 size)
 					GFP_KERNEL);
 	} else
 		vol_cmd_cnt = 0;
+
 	if (vol_cmds_d)
 		return 0;
 	volume_cmds_free();

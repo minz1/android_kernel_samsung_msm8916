@@ -933,6 +933,7 @@ static int msm_compr_configure_dsp(struct snd_compr_stream *cstream)
 	int dir = IN, ret = 0;
 	struct audio_client *ac = prtd->audio_client;
 	uint32_t stream_index;
+
 	struct asm_softpause_params softpause = {
 		.enable = SOFT_PAUSE_ENABLE,
 		.period = SOFT_PAUSE_PERIOD,
@@ -1248,6 +1249,7 @@ static int msm_compr_free(struct snd_compr_stream *cstream)
 	kfree(pdata->dec_params[soc_prtd->dai_link->be_id]);
 	pdata->dec_params[soc_prtd->dai_link->be_id] = NULL;
 	kfree(prtd);
+	runtime->private_data = NULL;
 
 	return 0;
 }
@@ -1941,8 +1943,7 @@ static int msm_compr_pointer(struct snd_compr_stream *cstream,
 	*/
 	if (!first_buffer || gapless_transition) {
 		if (gapless_transition)
-			pr_debug("%s session time in gapless transition",
-				 __func__);
+			pr_debug("%s session time in gapless transition", __func__);
 
 		switch (q6core_get_avs_version()) {
 		case (Q6_SUBSYS_AVS2_7):

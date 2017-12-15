@@ -887,6 +887,12 @@ static void process_init_reply(struct fuse_conn *fc, struct fuse_req *req)
 				if (arg->flags & FUSE_READDIRPLUS_AUTO)
 					fc->readdirplus_auto = 1;
 			}
+			if (arg->flags & FUSE_RESERVE_SPACE) {
+				fc->reserved_space_mb = arg->reserved_space_mb;
+				pr_info("FUSE: RESERVE_SPACE enabled [%s : %d]! %u\n",
+						current->comm, current->pid,
+						arg->reserved_space_mb);
+			}
 			if (arg->flags & FUSE_ASYNC_DIO)
 				fc->async_dio = 1;
 			if (arg->flags & FUSE_WRITEBACK_CACHE)
